@@ -54,7 +54,7 @@ class ChickenMergeGame {
           <button id="reset-button" type="button" class="button-secondary">Reiniciar</button>
         </div>
 
-        <p id="message" class="message" role="status">Toca una gallina y después otra igual para fusionarlas.</p>
+        <p id="message" class="message" role="status">Toca una gallina y después otra igual para fusionarla.</p>
       </section>
     `;
 
@@ -71,15 +71,16 @@ class ChickenMergeGame {
   async loadAssets() {
     await Promise.all(
       CHICKEN_TYPES.map(async (type) => {
-        const metadata = await fetch(type.spriteJson).then((response) => {
+        const jsonUrl = new URL(type.spriteJson, import.meta.url).href;
+        const metadata = await fetch(jsonUrl).then((response) => {
           if (!response.ok) {
-            throw new Error(`No se pudo cargar ${type.spriteJson}`);
+            throw new Error(`No se pudo cargar ${jsonUrl}`);
           }
 
           return response.json();
         });
 
-        const imageUrl = new URL(type.spriteJson.replace(/[^/]+$/, metadata.image), import.meta.url).href;
+        const imageUrl = new URL(metadata.image, jsonUrl).href;
         this.assets.set(type.id, { ...type, metadata, imageUrl });
       }),
     );
@@ -246,6 +247,7 @@ class ChickenMergeGame {
     const frame = animation.frames[0];
     const frameWidth = metadata.frameWidth;
     const frameHeight = metadata.frameHeight;
+    const spriteScale = 0.42;
     const x = frame * frameWidth;
     const y = stage.row * frameHeight;
     const sizeScale = stage.scale ?? 1;
@@ -255,12 +257,12 @@ class ChickenMergeGame {
     if (this.selectedId === chicken.id) node.classList.add('selected');
     if (chicken.merged) node.classList.add('merged');
     node.style.setProperty('--sprite-url', `url(${imageUrl})`);
-    node.style.setProperty('--sprite-x', `${-x}px`);
-    node.style.setProperty('--sprite-y', `${-y}px`);
-    node.style.setProperty('--sprite-w', `${metadata.imageWidth}px`);
-    node.style.setProperty('--sprite-h', `${metadata.imageHeight}px`);
-    node.style.setProperty('--frame-w', `${frameWidth}px`);
-    node.style.setProperty('--frame-h', `${frameHeight}px`);
+    node.style.setProperty('--sprite-x', `${-x * spriteScale}px`);
+    node.style.setProperty('--sprite-y', `${-y * spriteScale}px`);
+    node.style.setProperty('--sprite-w', `${metadata.imageWidth * spriteScale}px`);
+    node.style.setProperty('--sprite-h', `${metadata.imageHeight * spriteScale}px`);
+    node.style.setProperty('--frame-w', `${frameWidth * spriteScale}px`);
+    node.style.setProperty('--frame-h', `${frameHeight * spriteScale}px`);
     node.style.setProperty('--scale', sizeScale);
     node.title = `${asset.name}: ${stage.name}`;
     node.setAttribute('aria-label', `${asset.name}, ${stage.name}`);
