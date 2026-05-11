@@ -288,6 +288,14 @@ class ChickenMergeGame {
     for (const chicken of this.chickens) this.keepSpriteInside(chicken);
   }
 
+  getSpriteBottomPoint(chicken) {
+    const size = this.getChickenSize(chicken);
+    return {
+      x: chicken.x,
+      y: chicken.y + size.height / 2,
+    };
+  }
+
   loop(time) {
     const delta = Math.min((time - this.lastTime) / 1000 || 0, 0.05);
     this.lastTime = time;
@@ -378,12 +386,6 @@ class ChickenMergeGame {
 
     ctx.save();
     ctx.translate(chicken.x, chicken.y);
-    ctx.globalAlpha = 0.24;
-    ctx.fillStyle = '#3e230f';
-    ctx.beginPath();
-    ctx.ellipse(0, size.height * 0.38, size.width * 0.28, Math.max(size.height * 0.08, 5), 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
     ctx.scale(facingLeft ? -pulse : pulse, pulse);
     ctx.drawImage(asset.image, rect.x, rect.y, rect.width, rect.height, -size.width / 2, -size.height / 2, size.width, size.height);
 
@@ -402,6 +404,8 @@ class ChickenMergeGame {
     const { source, pointer } = this.drag;
     const target = this.getChickenAt(pointer.x, pointer.y, source.id);
     const canMerge = target && this.canMerge(source, target);
+    const start = this.getSpriteBottomPoint(source);
+
     ctx.save();
     ctx.strokeStyle = canMerge ? '#fff36d' : '#ffffff';
     ctx.globalAlpha = canMerge ? 1 : 0.72;
@@ -409,7 +413,7 @@ class ChickenMergeGame {
     ctx.lineCap = 'round';
     ctx.setLineDash(canMerge ? [] : [12, 10]);
     ctx.beginPath();
-    ctx.moveTo(source.x, source.y);
+    ctx.moveTo(start.x, start.y);
     ctx.lineTo(pointer.x, pointer.y);
     ctx.stroke();
     ctx.fillStyle = canMerge ? '#fff36d' : '#ffffff';

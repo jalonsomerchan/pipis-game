@@ -8,6 +8,11 @@ const DEFAULT_STAGES = [
   { id: 'gallina_abuela', name: 'Gallina abuela', row: 6, scale: 1 },
 ];
 
+const DEFAULT_ANIMATIONS = {
+  egg_idle: { frames: [0, 1, 2, 3, 4, 5, 6, 7], fps: 4 },
+  walk: { frames: [0, 1, 2, 3, 4, 5, 6, 7], fps: 8 },
+};
+
 export const CHICKEN_TYPES = [
   {
     id: 'gallina_amarilla',
@@ -18,10 +23,7 @@ export const CHICKEN_TYPES = [
     spawnWeight: 1,
     initialLevel: 0,
     stages: DEFAULT_STAGES,
-    animations: {
-      egg_idle: { frames: [0, 1, 2, 3, 4, 5, 6, 7], fps: 4 },
-      walk: { frames: [0, 1, 2, 3, 4, 5, 6, 7], fps: 8 },
-    },
+    animations: DEFAULT_ANIMATIONS,
   },
   {
     id: 'gallina_blanca',
@@ -32,10 +34,7 @@ export const CHICKEN_TYPES = [
     spawnWeight: 1,
     initialLevel: 0,
     stages: DEFAULT_STAGES,
-    animations: {
-      egg_idle: { frames: [0, 1, 2, 3, 4, 5, 6, 7], fps: 4 },
-      walk: { frames: [0, 1, 2, 3, 4, 5, 6, 7], fps: 8 },
-    },
+    animations: DEFAULT_ANIMATIONS,
   },
   {
     id: 'gallina_negra',
@@ -46,10 +45,7 @@ export const CHICKEN_TYPES = [
     spawnWeight: 1,
     initialLevel: 0,
     stages: DEFAULT_STAGES,
-    animations: {
-      egg_idle: { frames: [0, 1, 2, 3, 4, 5, 6, 7], fps: 4 },
-      walk: { frames: [0, 1, 2, 3, 4, 5, 6, 7], fps: 8 },
-    },
+    animations: DEFAULT_ANIMATIONS,
   },
   {
     id: 'gallina_marron',
@@ -60,10 +56,7 @@ export const CHICKEN_TYPES = [
     spawnWeight: 1,
     initialLevel: 0,
     stages: DEFAULT_STAGES,
-    animations: {
-      egg_idle: { frames: [0, 1, 2, 3, 4, 5, 6, 7], fps: 4 },
-      walk: { frames: [0, 1, 2, 3, 4, 5, 6, 7], fps: 8 },
-    },
+    animations: DEFAULT_ANIMATIONS,
   },
   {
     id: 'gallina_gris',
@@ -74,18 +67,24 @@ export const CHICKEN_TYPES = [
     spawnWeight: 1,
     initialLevel: 0,
     stages: DEFAULT_STAGES,
-    animations: {
-      egg_idle: { frames: [0, 1, 2, 3, 4, 5, 6, 7], fps: 4 },
-      walk: { frames: [0, 1, 2, 3, 4, 5, 6, 7], fps: 8 },
-    },
+    animations: DEFAULT_ANIMATIONS,
   },
 ];
 
 export const GAME_CONFIG = {
   initialChickens: 6,
-  maxChickens: 18,
-  spawnEveryMs: 6500,
+  maxChickens: 24,
+  spawnEveryMs: 8500,
+  spawnGrowthMs: 450,
+  maxSpawnEveryMs: 22000,
+  colorUnlockEveryEggs: 16,
   mergeScoreBase: 10,
   minSpeed: 12,
   maxSpeed: 28,
+  topSafeArea: 118,
+  foxHitsToScare: 4,
+  foxSpeed: 92,
+  foxChancePerSpawn: 0.16,
+  foxMinDelayMs: 18000,
+  foxMaxDelayMs: 32000,
 };
