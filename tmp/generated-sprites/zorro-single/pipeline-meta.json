@@ -1,0 +1,11 @@
+{
+  "target": "asset",
+  "mode": "single",
+  "prompt": "Single fox sprite",
+  "role": "",
+  "input": "/Users/jorgealonso/.codex/generated_images/019e1788-e91b-7623-a1a6-32d75f03feb9/ig_041037bff920bd63016a01f4fbc1a881918d534b6cdabdff04.png",
+  "threshold": 100,
+  "edge_threshold": 150,
+  "duration": 200,
+  "single_size": 256
+}
