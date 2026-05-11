@@ -149,29 +149,67 @@ class ChickenMergeGame {
 
   measureAlphaBounds(ctx, rect) {
     const { data, width, height } = ctx.getImageData(rect.x, rect.y, rect.width, rect.height);
-    let minX = width;
-    let minY = height;
-    let maxX = -1;
-    let maxY = -1;
+    const visited = new Uint8Array(width * height);
+    const alphaThreshold = 16;
+    let bestArea = 0;
+    let bestBounds = null;
 
-    for (let y = 0; y < height; y += 1) {
-      for (let x = 0; x < width; x += 1) {
-        const alpha = data[(y * width + x) * 4 + 3];
-        if (alpha <= 8) continue;
-        if (x < minX) minX = x;
-        if (y < minY) minY = y;
-        if (x > maxX) maxX = x;
-        if (y > maxY) maxY = y;
+    for (let startY = 0; startY < height; startY += 1) {
+      for (let startX = 0; startX < width; startX += 1) {
+        const startIndex = startY * width + startX;
+        if (visited[startIndex]) continue;
+        visited[startIndex] = 1;
+
+        if (data[startIndex * 4 + 3] <= alphaThreshold) continue;
+
+        let area = 0;
+        let minX = startX;
+        let minY = startY;
+        let maxX = startX;
+        let maxY = startY;
+        const queue = [startIndex];
+
+        while (queue.length) {
+          const index = queue.pop();
+          const x = index % width;
+          const y = Math.floor(index / width);
+          area += 1;
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+
+          const neighbors = [
+            index - 1,
+            index + 1,
+            index - width,
+            index + width,
+          ];
+
+          for (const neighbor of neighbors) {
+            if (neighbor < 0 || neighbor >= visited.length || visited[neighbor]) continue;
+            const nx = neighbor % width;
+            const ny = Math.floor(neighbor / width);
+            if (Math.abs(nx - x) + Math.abs(ny - y) !== 1) continue;
+            visited[neighbor] = 1;
+            if (data[neighbor * 4 + 3] > alphaThreshold) queue.push(neighbor);
+          }
+        }
+
+        if (area > bestArea) {
+          bestArea = area;
+          bestBounds = { minX, minY, maxX, maxY };
+        }
       }
     }
 
-    if (maxX < minX || maxY < minY) return rect;
+    if (!bestBounds) return rect;
 
     return {
-      x: rect.x + minX,
-      y: rect.y + minY,
-      width: maxX - minX + 1,
-      height: maxY - minY + 1,
+      x: rect.x + bestBounds.minX,
+      y: rect.y + bestBounds.minY,
+      width: bestBounds.maxX - bestBounds.minX + 1,
+      height: bestBounds.maxY - bestBounds.minY + 1,
     };
   }
 
