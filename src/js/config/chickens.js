@@ -9,10 +9,13 @@ export const CHICKEN_TYPES = [
 ];
 
 export const GAME_CONFIG = {
-  boardSize: 4,
-  initialChickens: 5,
-  maxChickens: 16,
-  spawnEveryMs: 5500,
+  initialChickens: 6,
+  maxChickens: 18,
+  spawnEveryMs: 6500,
   mergeScoreBase: 10,
-  maxQueue: 3,
+  canvasWidth: 900,
+  canvasHeight: 620,
+  minSpeed: 12,
+  maxSpeed: 28,
+  mergeDistance: 62,
 };
