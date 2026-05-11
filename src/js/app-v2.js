@@ -77,7 +77,9 @@ class ChickenMergeGame {
       const image = await this.loadImage(imageUrl);
       const metadata = { columns: type.columns, rows: type.rows, stages: type.stages, animations: type.animations, defaultFps: type.defaultFps ?? 8 };
       const frameRects = this.createGridFrameRects(image, metadata);
-      this.assets.set(type.id, { ...type, metadata, image, frameRects });
+      const contentFrameRects = this.measureContentFrameRects(image, frameRects);
+      const referenceFrameRects = this.buildReferenceFrameRects(contentFrameRects);
+      this.assets.set(type.id, { ...type, metadata, image, frameRects, contentFrameRects, referenceFrameRects });
     }));
     await this.loadFoxAsset();
   }
@@ -87,7 +89,25 @@ class ChickenMergeGame {
     if (!foxUrl) return;
     try {
       const image = await this.loadImage(foxUrl);
-      this.foxAsset = { image, columns: 8, rows: 1, frames: Array.from({ length: 8 }, (_, index) => index), fps: 10 };
+      const metadata = { columns: 16, rows: 1 };
+      const frameRects = this.createGridFrameRects(image, metadata);
+      const contentFrameRects = this.measureContentFrameRects(image, frameRects);
+      const referenceFrameRects = this.buildReferenceFrameRects(contentFrameRects);
+      const referenceRect = referenceFrameRects[0]?.[0] ?? frameRects[0][0];
+      const baseHeight = 58;
+      const baseWidth = Math.max(96, Math.round((referenceRect.width / Math.max(1, referenceRect.height)) * baseHeight));
+      this.foxAsset = {
+        image,
+        columns: 16,
+        rows: 1,
+        frames: Array.from({ length: 16 }, (_, index) => index),
+        fps: 10,
+        frameRects,
+        contentFrameRects,
+        referenceRect,
+        renderWidth: baseWidth,
+        renderHeight: baseHeight,
+      };
     } catch (error) {
       console.warn('No se pudo cargar el sprite del zorro. Se usará un fallback.', error);
     }
@@ -113,6 +133,53 @@ class ChickenMergeGame {
         const nextX = Math.floor(((column + 1) * width) / metadata.columns);
         return { x, y, width: Math.max(1, nextX - x), height: Math.max(1, nextY - y) };
       });
+    });
+  }
+
+  measureContentFrameRects(image, frameRects) {
+    const probeCanvas = document.createElement('canvas');
+    probeCanvas.width = image.naturalWidth;
+    probeCanvas.height = image.naturalHeight;
+    const probeCtx = probeCanvas.getContext('2d', { willReadFrequently: true });
+    probeCtx.clearRect(0, 0, probeCanvas.width, probeCanvas.height);
+    probeCtx.drawImage(image, 0, 0);
+
+    return frameRects.map((row) => row.map((rect) => this.measureAlphaBounds(probeCtx, rect)));
+  }
+
+  measureAlphaBounds(ctx, rect) {
+    const { data, width, height } = ctx.getImageData(rect.x, rect.y, rect.width, rect.height);
+    let minX = width;
+    let minY = height;
+    let maxX = -1;
+    let maxY = -1;
+
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const alpha = data[(y * width + x) * 4 + 3];
+        if (alpha <= 8) continue;
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+    }
+
+    if (maxX < minX || maxY < minY) return rect;
+
+    return {
+      x: rect.x + minX,
+      y: rect.y + minY,
+      width: maxX - minX + 1,
+      height: maxY - minY + 1,
+    };
+  }
+
+  buildReferenceFrameRects(contentFrameRects) {
+    return contentFrameRects.map((row) => {
+      const maxWidth = Math.max(...row.map((rect) => rect.width));
+      const maxHeight = Math.max(...row.map((rect) => rect.height));
+      return row.map(() => ({ width: maxWidth, height: maxHeight }));
     });
   }
 
@@ -226,7 +293,19 @@ class ChickenMergeGame {
     if (this.fox && !forced) return;
     const bounds = this.getBounds();
     const fromLeft = Math.random() > 0.5;
-    this.fox = { x: fromLeft ? -100 : bounds.width + 100, y: randomBetween(bounds.top + 70, Math.max(bounds.top + 70, bounds.bottom - 70)), vx: fromLeft ? GAME_CONFIG.foxSpeed : -GAME_CONFIG.foxSpeed, width: 124, height: 50, frameTime: 0, hits: 0, state: 'hunting', targetId: this.findFoxTarget()?.id ?? null };
+    const foxWidth = this.foxAsset?.renderWidth ?? 124;
+    const foxHeight = this.foxAsset?.renderHeight ?? 50;
+    this.fox = {
+      x: fromLeft ? -100 : bounds.width + 100,
+      y: randomBetween(bounds.top + 70, Math.max(bounds.top + 70, bounds.bottom - 70)),
+      vx: fromLeft ? GAME_CONFIG.foxSpeed : -GAME_CONFIG.foxSpeed,
+      width: foxWidth,
+      height: foxHeight,
+      frameTime: 0,
+      hits: 0,
+      state: 'hunting',
+      targetId: this.findFoxTarget()?.id ?? null,
+    };
     this.setMessage('¡Zorro! Púlsalo varias veces para espantarlo.');
   }
 
@@ -300,16 +379,18 @@ class ChickenMergeGame {
   getFrameRect(typeId, level, frame = 0) {
     const asset = this.assets.get(typeId);
     const stage = asset.metadata.stages[level];
-    return asset.frameRects[stage.row]?.[clamp(frame, 0, asset.metadata.columns - 1)];
+    return asset.contentFrameRects[stage.row]?.[clamp(frame, 0, asset.metadata.columns - 1)]
+      ?? asset.frameRects[stage.row]?.[clamp(frame, 0, asset.metadata.columns - 1)];
   }
 
   getRenderSize(typeId, level, frame = 0) {
     const asset = this.assets.get(typeId);
     const stage = asset.metadata.stages[level];
     const rect = this.getFrameRect(typeId, level, frame);
+    const referenceRect = asset.referenceFrameRects[stage.row]?.[0] ?? rect;
     const bounds = this.getBounds();
     const baseWidth = clamp(bounds.width * 0.13, 72, 132);
-    const scale = (baseWidth / rect.width) * (stage.scale ?? 1);
+    const scale = (baseWidth / referenceRect.width) * (stage.scale ?? 1);
     return { width: rect.width * scale, height: rect.height * scale, scale };
   }
 
@@ -477,8 +558,8 @@ class ChickenMergeGame {
     ctx.scale(facingLeft ? -1 : 1, 1);
     if (this.foxAsset) {
       const frameIndex = Math.floor(fox.frameTime * this.foxAsset.fps) % this.foxAsset.frames.length;
-      const frameWidth = this.foxAsset.image.naturalWidth / this.foxAsset.columns;
-      ctx.drawImage(this.foxAsset.image, Math.floor(frameIndex * frameWidth), 0, Math.floor(frameWidth), this.foxAsset.image.naturalHeight, -fox.width / 2, -fox.height / 2, fox.width, fox.height);
+      const rect = this.foxAsset.contentFrameRects[0]?.[frameIndex] ?? this.foxAsset.frameRects[0]?.[frameIndex];
+      ctx.drawImage(this.foxAsset.image, rect.x, rect.y, rect.width, rect.height, -fox.width / 2, -fox.height / 2, fox.width, fox.height);
     } else {
       this.drawFallbackFox(ctx, fox);
     }
