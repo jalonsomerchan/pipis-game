@@ -1,0 +1,65 @@
+{
+  "id": "zorro",
+  "image": "zorro.png",
+  "type": "spritesheet",
+  "imageWidth": 1000,
+  "imageHeight": 141,
+  "columns": 8,
+  "rows": 1,
+  "frameWidth": 125,
+  "frameHeight": 141,
+  "spacing": 0,
+  "trim": null,
+  "defaultFps": 8,
+  "anchor": {
+    "x": 0.5,
+    "y": 1
+  },
+  "stages": [
+    {
+      "id": "zorro",
+      "name": "Zorro",
+      "row": 0,
+      "scale": 1,
+      "description": "Zorro caminando"
+    }
+  ],
+  "animations": {
+    "idle": {
+      "name": "Quieto",
+      "frames": [0],
+      "fps": 1,
+      "loop": true
+    },
+    "walk": {
+      "name": "Caminando",
+      "frames": [0, 1, 2, 3, 4, 5, 6, 7],
+      "fps": 8,
+      "loop": true
+    },
+    "run": {
+      "name": "Corriendo",
+      "frames": [0, 1, 2, 3, 4, 5, 6, 7],
+      "fps": 12,
+      "loop": true
+    }
+  },
+  "hitbox": {
+    "x": 0.18,
+    "y": 0.35,
+    "width": 0.64,
+    "height": 0.55
+  },
+  "shadow": {
+    "enabled": true,
+    "offsetY": 2,
+    "width": 0.65,
+    "height": 0.1,
+    "opacity": 0.22
+  },
+  "render": {
+    "pixelPerfect": false,
+    "smooth": true,
+    "defaultScale": 1
+  }
+}
