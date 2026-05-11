@@ -127,7 +127,8 @@ class ChickenMergeGame {
         }
 
         const image = await this.loadImage(imageUrl);
-        this.assets.set(type.id, { ...type, metadata, image });
+        const frameRects = this.createFrameRects(image, metadata);
+        this.assets.set(type.id, { ...type, metadata, image, frameRects });
       }),
     );
   }
@@ -139,6 +140,73 @@ class ChickenMergeGame {
       image.onerror = reject;
       image.src = src;
     });
+  }
+
+  createFrameRects(image, metadata) {
+    const columns = metadata.columns;
+    const rows = metadata.rows;
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    canvas.width = image.naturalWidth || metadata.imageWidth;
+    canvas.height = image.naturalHeight || metadata.imageHeight;
+    ctx.drawImage(image, 0, 0);
+
+    const frameRects = [];
+
+    for (let row = 0; row < rows; row += 1) {
+      frameRects[row] = [];
+
+      for (let column = 0; column < columns; column += 1) {
+        const cellX = Math.round((column * canvas.width) / columns);
+        const cellY = Math.round((row * canvas.height) / rows);
+        const nextCellX = Math.round(((column + 1) * canvas.width) / columns);
+        const nextCellY = Math.round(((row + 1) * canvas.height) / rows);
+        const cellWidth = Math.max(1, nextCellX - cellX);
+        const cellHeight = Math.max(1, nextCellY - cellY);
+        const imageData = ctx.getImageData(cellX, cellY, cellWidth, cellHeight).data;
+        let minX = cellWidth;
+        let minY = cellHeight;
+        let maxX = -1;
+        let maxY = -1;
+
+        for (let y = 0; y < cellHeight; y += 1) {
+          for (let x = 0; x < cellWidth; x += 1) {
+            const alpha = imageData[(y * cellWidth + x) * 4 + 3];
+            if (alpha > 18) {
+              minX = Math.min(minX, x);
+              minY = Math.min(minY, y);
+              maxX = Math.max(maxX, x);
+              maxY = Math.max(maxY, y);
+            }
+          }
+        }
+
+        if (maxX === -1) {
+          frameRects[row][column] = {
+            x: cellX,
+            y: cellY,
+            width: cellWidth,
+            height: cellHeight,
+          };
+          continue;
+        }
+
+        const padding = 2;
+        const sourceX = cellX + Math.max(0, minX - padding);
+        const sourceY = cellY + Math.max(0, minY - padding);
+        const sourceMaxX = cellX + Math.min(cellWidth - 1, maxX + padding);
+        const sourceMaxY = cellY + Math.min(cellHeight - 1, maxY + padding);
+
+        frameRects[row][column] = {
+          x: sourceX,
+          y: sourceY,
+          width: sourceMaxX - sourceX + 1,
+          height: sourceMaxY - sourceY + 1,
+        };
+      }
+    }
+
+    return frameRects;
   }
 
   bindEvents() {
@@ -237,25 +305,36 @@ class ChickenMergeGame {
     };
   }
 
-  getRenderSize(typeId, level) {
+  getFrameRect(typeId, level, frame = 0) {
     const asset = this.assets.get(typeId);
     const stage = asset.metadata.stages[level];
-    const frameWidth = asset.metadata.frameWidth;
-    const frameHeight = asset.metadata.frameHeight;
+    const column = clamp(frame, 0, asset.metadata.columns - 1);
+    return asset.frameRects[stage.row]?.[column] ?? {
+      x: 0,
+      y: 0,
+      width: asset.metadata.frameWidth,
+      height: asset.metadata.frameHeight,
+    };
+  }
+
+  getRenderSize(typeId, level, frame = 0) {
+    const asset = this.assets.get(typeId);
+    const stage = asset.metadata.stages[level];
+    const rect = this.getFrameRect(typeId, level, frame);
     const bounds = this.getBounds();
-    const baseWidth = clamp(bounds.width * 0.14, 68, 126);
-    const scale = (baseWidth / frameWidth) * (stage.scale ?? 1);
+    const baseWidth = clamp(bounds.width * 0.115, 58, 118);
+    const scale = (baseWidth / rect.width) * (stage.scale ?? 1);
 
     return {
-      width: frameWidth * scale,
-      height: frameHeight * scale,
+      width: rect.width * scale,
+      height: rect.height * scale,
       scale,
     };
   }
 
   getHitRadius(size, level) {
-    const base = level === 0 ? Math.max(size.width, size.height) * 0.46 : size.width * 0.42;
-    return Math.max(base, 38);
+    const base = level === 0 ? Math.max(size.width, size.height) * 0.5 : size.width * 0.46;
+    return Math.max(base, 34);
   }
 
   loop(time) {
@@ -353,17 +432,13 @@ class ChickenMergeGame {
   drawChicken(chicken) {
     const asset = this.assets.get(chicken.typeId);
     const { metadata, image } = asset;
-    const stage = metadata.stages[chicken.level];
     const animation = chicken.level === 0 ? metadata.animations.egg_idle : metadata.animations.walk;
     const frameIndex = Math.floor(chicken.frameTime * (animation.fps ?? metadata.defaultFps ?? 8)) % animation.frames.length;
     const frame = animation.frames[frameIndex];
-    const frameWidth = metadata.frameWidth;
-    const frameHeight = metadata.frameHeight;
-    const sourceX = Math.round(frame * frameWidth);
-    const sourceY = Math.round(stage.row * frameHeight);
-    const size = this.getRenderSize(chicken.typeId, chicken.level);
+    const rect = this.getFrameRect(chicken.typeId, chicken.level, frame);
+    const size = this.getRenderSize(chicken.typeId, chicken.level, frame);
     const pulse = 1 + chicken.mergedPulse * 0.2;
-    const facingLeft = chicken.vx < 0;
+    const facingLeft = chicken.level > 0 && chicken.vx < 0;
 
     const ctx = this.ctx;
     ctx.save();
@@ -379,10 +454,10 @@ class ChickenMergeGame {
     ctx.scale(facingLeft ? -pulse : pulse, pulse);
     ctx.drawImage(
       image,
-      sourceX,
-      sourceY,
-      Math.floor(frameWidth),
-      Math.floor(frameHeight),
+      rect.x,
+      rect.y,
+      rect.width,
+      rect.height,
       -size.width / 2,
       -size.height / 2,
       size.width,
