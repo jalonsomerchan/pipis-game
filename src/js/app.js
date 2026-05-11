@@ -2,6 +2,16 @@ import '../css/main.css';
 import { CHICKEN_TYPES, GAME_CONFIG } from './config/chickens.js';
 
 const gameRoot = document.querySelector('#game');
+const spriteJsonUrls = import.meta.glob('../assets/sprites/gallinas/**/*.json', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+});
+const spriteImageUrls = import.meta.glob('../assets/sprites/gallinas/**/*.{png,jpg,jpeg,webp}', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+});
 
 class ChickenMergeGame {
   constructor(root) {
@@ -71,7 +81,11 @@ class ChickenMergeGame {
   async loadAssets() {
     await Promise.all(
       CHICKEN_TYPES.map(async (type) => {
-        const jsonUrl = new URL(type.spriteJson, import.meta.url).href;
+        const jsonUrl = spriteJsonUrls[type.spriteJson];
+        if (!jsonUrl) {
+          throw new Error(`No se encontró el sprite JSON configurado: ${type.spriteJson}`);
+        }
+
         const metadata = await fetch(jsonUrl).then((response) => {
           if (!response.ok) {
             throw new Error(`No se pudo cargar ${jsonUrl}`);
@@ -80,7 +94,14 @@ class ChickenMergeGame {
           return response.json();
         });
 
-        const imageUrl = new URL(metadata.image, jsonUrl).href;
+        const folder = type.spriteJson.replace(/[^/]+$/, '');
+        const imageKey = `${folder}${metadata.image}`;
+        const imageUrl = spriteImageUrls[imageKey];
+
+        if (!imageUrl) {
+          throw new Error(`No se encontró la imagen del sprite: ${imageKey}`);
+        }
+
         this.assets.set(type.id, { ...type, metadata, imageUrl });
       }),
     );
