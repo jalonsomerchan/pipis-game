@@ -21,6 +21,7 @@ class ChickenMergeGame {
     this.root = root;
     this.assets = new Map();
     this.chickens = [];
+    this.effects = [];
     this.drag = null;
     this.score = 0;
     this.nextId = 1;
@@ -28,47 +29,69 @@ class ChickenMergeGame {
     this.animationFrame = null;
     this.lastTime = 0;
     this.isReady = false;
+    this.hasStarted = false;
     this.pixelRatio = window.devicePixelRatio || 1;
   }
 
   async init() {
-    this.renderShell();
-    await this.loadAssets();
-    this.isReady = true;
+    this.renderMenu();
+
+    try {
+      await this.loadAssets();
+      this.isReady = true;
+      this.enableMenuButton();
+    } catch (error) {
+      console.error(error);
+      this.root.innerHTML = '<p class="error">No se ha podido cargar el juego. Revisa la ruta de los sprites.</p>';
+    }
+  }
+
+  renderMenu() {
+    this.root.innerHTML = `
+      <section class="start-screen">
+        <div class="start-content">
+          <p class="eyebrow">Pipi's Game</p>
+          <h1>Fusiona gallinas</h1>
+          <p class="subtitle">Une huevos y gallinas iguales arrastrando una línea entre ellos para crear criaturas más grandes.</p>
+          <button id="play-button" class="play-button" type="button" disabled>Cargando...</button>
+        </div>
+      </section>
+    `;
+  }
+
+  enableMenuButton() {
+    const button = this.root.querySelector('#play-button');
+    if (!button) return;
+
+    button.disabled = false;
+    button.textContent = 'Jugar';
+    button.addEventListener('click', () => this.startGame());
+  }
+
+  startGame() {
+    this.hasStarted = true;
+    this.renderGame();
     this.resizeCanvas();
     this.bindEvents();
     this.reset();
     this.startSpawner();
+    window.cancelAnimationFrame(this.animationFrame);
     this.animationFrame = window.requestAnimationFrame((time) => this.loop(time));
   }
 
-  renderShell() {
+  renderGame() {
     this.root.innerHTML = `
-      <section class="game-card">
-        <div class="game-topbar">
-          <div>
-            <p class="eyebrow">Pipi's Game</p>
-            <h1>Fusiona gallinas</h1>
-            <p class="subtitle">Las gallinas pasean por el establo. Pincha una y arrastra hasta otra igual para unirlas.</p>
-          </div>
+      <section class="play-screen">
+        <canvas id="game-canvas" class="game-canvas" aria-label="Establo con huevos y gallinas"></canvas>
 
-          <div class="score-card" aria-live="polite">
+        <div class="hud">
+          <div class="hud-score" aria-live="polite">
             <span>Puntos</span>
             <strong id="score">0</strong>
           </div>
+          <div id="message" class="hud-message" role="status">Arrastra desde un huevo o gallina hasta otro igual.</div>
+          <button id="reset-button" type="button" class="hud-button">Reiniciar</button>
         </div>
-
-        <div class="stable-wrap">
-          <div class="stable-roof"></div>
-          <canvas id="game-canvas" class="game-canvas" aria-label="Establo con gallinas caminando"></canvas>
-        </div>
-
-        <div class="game-actions">
-          <button id="spawn-button" type="button">Añadir gallina</button>
-          <button id="reset-button" type="button" class="button-secondary">Reiniciar</button>
-        </div>
-
-        <p id="message" class="message" role="status">Arrastra desde una gallina hasta otra igual para fusionarlas.</p>
       </section>
     `;
 
@@ -76,7 +99,6 @@ class ChickenMergeGame {
     this.ctx = this.canvas.getContext('2d');
     this.scoreNode = this.root.querySelector('#score');
     this.messageNode = this.root.querySelector('#message');
-    this.root.querySelector('#spawn-button').addEventListener('click', () => this.spawnChicken(true));
     this.root.querySelector('#reset-button').addEventListener('click', () => this.reset());
   }
 
@@ -125,10 +147,11 @@ class ChickenMergeGame {
     this.canvas.addEventListener('pointermove', (event) => this.onPointerMove(event));
     this.canvas.addEventListener('pointerup', (event) => this.onPointerUp(event));
     this.canvas.addEventListener('pointercancel', () => this.cancelDrag());
-    this.canvas.addEventListener('lostpointercapture', () => this.cancelDrag());
   }
 
   resizeCanvas() {
+    if (!this.canvas) return;
+
     const rect = this.canvas.getBoundingClientRect();
     this.pixelRatio = window.devicePixelRatio || 1;
     this.canvas.width = Math.round(rect.width * this.pixelRatio);
@@ -147,6 +170,7 @@ class ChickenMergeGame {
 
   reset() {
     this.chickens = [];
+    this.effects = [];
     this.drag = null;
     this.score = 0;
     this.nextId = 1;
@@ -156,7 +180,7 @@ class ChickenMergeGame {
       this.spawnChicken();
     }
 
-    this.setMessage('Partida reiniciada. Arrastra una gallina hasta otra igual.');
+    this.setMessage('Arrastra desde un huevo o gallina hasta otro igual.');
   }
 
   getBounds() {
@@ -176,19 +200,15 @@ class ChickenMergeGame {
     return CHICKEN_TYPES[0];
   }
 
-  spawnChicken(fromButton = false) {
-    if (this.chickens.length >= GAME_CONFIG.maxChickens) {
-      if (fromButton) this.setMessage('El establo está lleno. Fusiona gallinas para hacer hueco.');
-      return;
-    }
+  spawnChicken() {
+    if (this.chickens.length >= GAME_CONFIG.maxChickens) return;
 
     const bounds = this.getBounds();
     const type = this.getRandomType();
     const level = type.initialLevel ?? 0;
     const renderSize = this.getRenderSize(type.id, level);
-    const radius = renderSize.width * 0.34;
-    const direction = Math.random() > 0.5 ? 1 : -1;
-    const speed = randomBetween(GAME_CONFIG.minSpeed, GAME_CONFIG.maxSpeed) * direction;
+    const radius = this.getHitRadius(renderSize, level);
+    const movement = this.getMovementForLevel(level);
 
     this.chickens.push({
       id: this.nextId,
@@ -196,15 +216,25 @@ class ChickenMergeGame {
       level,
       x: randomBetween(radius + 8, Math.max(radius + 8, bounds.width - radius - 8)),
       y: randomBetween(radius + 18, Math.max(radius + 18, bounds.height - radius - 18)),
-      vx: speed,
-      vy: randomBetween(-10, 10),
+      vx: movement.vx,
+      vy: movement.vy,
       radius,
       frameTime: randomBetween(0, 1),
       mergedPulse: 0,
     });
     this.nextId += 1;
+  }
 
-    if (fromButton) this.setMessage('Ha entrado una gallina nueva al establo.');
+  getMovementForLevel(level) {
+    if (level === 0) {
+      return { vx: 0, vy: 0 };
+    }
+
+    const direction = Math.random() > 0.5 ? 1 : -1;
+    return {
+      vx: randomBetween(GAME_CONFIG.minSpeed, GAME_CONFIG.maxSpeed) * direction,
+      vy: randomBetween(-10, 10),
+    };
   }
 
   getRenderSize(typeId, level) {
@@ -212,7 +242,8 @@ class ChickenMergeGame {
     const stage = asset.metadata.stages[level];
     const frameWidth = asset.metadata.frameWidth;
     const frameHeight = asset.metadata.frameHeight;
-    const baseWidth = clamp(this.getBounds().width * 0.16, 70, 118);
+    const bounds = this.getBounds();
+    const baseWidth = clamp(bounds.width * 0.14, 68, 126);
     const scale = (baseWidth / frameWidth) * (stage.scale ?? 1);
 
     return {
@@ -222,11 +253,16 @@ class ChickenMergeGame {
     };
   }
 
+  getHitRadius(size, level) {
+    const base = level === 0 ? Math.max(size.width, size.height) * 0.46 : size.width * 0.42;
+    return Math.max(base, 38);
+  }
+
   loop(time) {
     const delta = Math.min((time - this.lastTime) / 1000 || 0, 0.05);
     this.lastTime = time;
 
-    if (this.isReady) {
+    if (this.isReady && this.hasStarted) {
       this.update(delta);
       this.draw();
     }
@@ -238,15 +274,15 @@ class ChickenMergeGame {
     const bounds = this.getBounds();
 
     for (const chicken of this.chickens) {
-      if (this.drag?.source?.id === chicken.id) {
-        chicken.frameTime += delta;
+      chicken.frameTime += delta;
+      chicken.mergedPulse = Math.max(0, chicken.mergedPulse - delta * 3);
+
+      if (chicken.level === 0 || this.drag?.source?.id === chicken.id) {
         continue;
       }
 
       chicken.x += chicken.vx * delta;
       chicken.y += chicken.vy * delta;
-      chicken.frameTime += delta;
-      chicken.mergedPulse = Math.max(0, chicken.mergedPulse - delta * 3);
 
       if (chicken.x < chicken.radius || chicken.x > bounds.width - chicken.radius) {
         chicken.vx *= -1;
@@ -262,6 +298,10 @@ class ChickenMergeGame {
         chicken.vy = randomBetween(-12, 12);
       }
     }
+
+    this.effects = this.effects
+      .map((effect) => ({ ...effect, age: effect.age + delta }))
+      .filter((effect) => effect.age < effect.duration);
   }
 
   draw() {
@@ -277,6 +317,10 @@ class ChickenMergeGame {
 
     if (this.drag) {
       this.drawDragLine();
+    }
+
+    for (const effect of this.effects) {
+      this.drawMergeEffect(effect);
     }
   }
 
@@ -298,7 +342,7 @@ class ChickenMergeGame {
 
     ctx.globalAlpha = 0.16;
     ctx.fillStyle = '#fff3c4';
-    for (let i = 0; i < 34; i += 1) {
+    for (let i = 0; i < 44; i += 1) {
       const x = (i * 97) % bounds.width;
       const y = (i * 53) % bounds.height;
       ctx.fillRect(x, y, 18, 3);
@@ -318,7 +362,7 @@ class ChickenMergeGame {
     const sourceX = Math.round(frame * frameWidth);
     const sourceY = Math.round(stage.row * frameHeight);
     const size = this.getRenderSize(chicken.typeId, chicken.level);
-    const pulse = 1 + chicken.mergedPulse * 0.16;
+    const pulse = 1 + chicken.mergedPulse * 0.2;
     const facingLeft = chicken.vx < 0;
 
     const ctx = this.ctx;
@@ -349,7 +393,7 @@ class ChickenMergeGame {
       ctx.strokeStyle = '#fff3a8';
       ctx.lineWidth = 5 / pulse;
       ctx.beginPath();
-      ctx.arc(0, 0, Math.max(size.width, size.height) * 0.38, 0, Math.PI * 2);
+      ctx.arc(0, 0, chicken.radius / pulse, 0, Math.PI * 2);
       ctx.stroke();
     }
 
@@ -363,9 +407,9 @@ class ChickenMergeGame {
     const canMerge = target && this.canMerge(source, target);
 
     ctx.save();
-    ctx.strokeStyle = canMerge ? '#fff3a8' : '#ffffff';
-    ctx.globalAlpha = canMerge ? 0.95 : 0.62;
-    ctx.lineWidth = canMerge ? 7 : 5;
+    ctx.strokeStyle = canMerge ? '#fff36d' : '#ffffff';
+    ctx.globalAlpha = canMerge ? 1 : 0.72;
+    ctx.lineWidth = canMerge ? 8 : 6;
     ctx.lineCap = 'round';
     ctx.setLineDash(canMerge ? [] : [12, 10]);
     ctx.beginPath();
@@ -373,10 +417,35 @@ class ChickenMergeGame {
     ctx.lineTo(pointer.x, pointer.y);
     ctx.stroke();
 
-    ctx.fillStyle = canMerge ? '#fff3a8' : '#ffffff';
+    ctx.fillStyle = canMerge ? '#fff36d' : '#ffffff';
     ctx.beginPath();
-    ctx.arc(pointer.x, pointer.y, canMerge ? 10 : 7, 0, Math.PI * 2);
+    ctx.arc(pointer.x, pointer.y, canMerge ? 11 : 8, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
+  }
+
+  drawMergeEffect(effect) {
+    const progress = effect.age / effect.duration;
+    const alpha = 1 - progress;
+    const radius = effect.radius + progress * 92;
+    const ctx = this.ctx;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = '#fff36d';
+    ctx.lineWidth = 8 * alpha;
+    ctx.beginPath();
+    ctx.arc(effect.x, effect.y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.fillStyle = '#fff8b8';
+    for (let i = 0; i < 10; i += 1) {
+      const angle = (Math.PI * 2 * i) / 10 + progress * 2;
+      const sparkRadius = radius * 0.55 + progress * 36;
+      ctx.beginPath();
+      ctx.arc(effect.x + Math.cos(angle) * sparkRadius, effect.y + Math.sin(angle) * sparkRadius, 5 * alpha, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.restore();
   }
 
@@ -393,21 +462,22 @@ class ChickenMergeGame {
     const chicken = this.getChickenAt(pointer.x, pointer.y);
     if (!chicken) return;
 
+    event.preventDefault();
     this.canvas.setPointerCapture(event.pointerId);
     this.drag = { pointerId: event.pointerId, source: chicken, pointer };
-    chicken.vx *= 0.25;
-    chicken.vy *= 0.25;
-    this.setMessage('Arrastra la línea hasta una gallina igual.');
+    this.setMessage('Arrastra la línea hasta otro igual.');
   }
 
   onPointerMove(event) {
     if (!this.drag || this.drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
     this.drag.pointer = this.getPointer(event);
   }
 
   onPointerUp(event) {
     if (!this.drag || this.drag.pointerId !== event.pointerId) return;
 
+    event.preventDefault();
     const pointer = this.getPointer(event);
     const source = this.drag.source;
     const target = this.getChickenAt(pointer.x, pointer.y, source.id);
@@ -417,7 +487,7 @@ class ChickenMergeGame {
     } else if (target) {
       this.setMessage('No son iguales. Tienen que ser del mismo color y tamaño.');
     } else {
-      this.setMessage('Suelta la línea encima de otra gallina igual.');
+      this.setMessage('Suelta la línea encima de otro huevo o gallina igual.');
     }
 
     this.cancelDrag();
@@ -434,7 +504,7 @@ class ChickenMergeGame {
         if (chicken.id === excludeId) return false;
         const dx = x - chicken.x;
         const dy = y - chicken.y;
-        return Math.hypot(dx, dy) <= chicken.radius * 1.15;
+        return Math.hypot(dx, dy) <= chicken.radius * 1.35;
       });
   }
 
@@ -454,18 +524,19 @@ class ChickenMergeGame {
     this.chickens = this.chickens.filter((item) => item.id !== first.id && item.id !== second.id);
 
     const type = CHICKEN_TYPES.find((item) => item.id === first.typeId);
-    const speed = randomBetween(GAME_CONFIG.minSpeed, GAME_CONFIG.maxSpeed) * (Math.random() > 0.5 ? 1 : -1);
+    const movement = this.getMovementForLevel(nextLevel);
     const renderSize = this.getRenderSize(type.id, nextLevel);
-    const radius = renderSize.width * 0.34;
+    const radius = this.getHitRadius(renderSize, nextLevel);
 
+    this.effects.push({ x, y, radius, age: 0, duration: 0.62 });
     this.chickens.push({
       id: this.nextId,
       typeId: first.typeId,
       level: nextLevel,
       x,
       y,
-      vx: speed,
-      vy: randomBetween(-10, 10),
+      vx: movement.vx,
+      vy: movement.vy,
       radius,
       frameTime: 0,
       mergedPulse: 1,
@@ -488,8 +559,5 @@ class ChickenMergeGame {
 
 if (gameRoot) {
   const game = new ChickenMergeGame(gameRoot);
-  game.init().catch((error) => {
-    console.error(error);
-    gameRoot.innerHTML = '<p class="error">No se ha podido cargar el juego. Revisa la ruta de los sprites.</p>';
-  });
+  game.init();
 }
