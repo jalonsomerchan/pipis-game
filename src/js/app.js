@@ -2,11 +2,6 @@ import '../css/main.css';
 import { CHICKEN_TYPES, GAME_CONFIG } from './config/chickens.js';
 
 const gameRoot = document.querySelector('#game');
-const spriteJsonUrls = import.meta.glob('../assets/sprites/gallinas/**/*.json', {
-  eager: true,
-  query: '?url',
-  import: 'default',
-});
 const spriteImageUrls = import.meta.glob('../assets/sprites/gallinas/**/*.{png,jpg,jpeg,webp}', {
   eager: true,
   query: '?url',
@@ -103,20 +98,17 @@ class ChickenMergeGame {
   async loadAssets() {
     await Promise.all(
       CHICKEN_TYPES.map(async (type) => {
-        const jsonUrl = spriteJsonUrls[type.spriteJson];
-        if (!jsonUrl) throw new Error(`No se encontró el sprite JSON configurado: ${type.spriteJson}`);
-
-        const metadata = await fetch(jsonUrl).then((response) => {
-          if (!response.ok) throw new Error(`No se pudo cargar ${jsonUrl}`);
-          return response.json();
-        });
-
-        const folder = type.spriteJson.replace(/[^/]+$/, '');
-        const imageKey = `${folder}${metadata.image}`;
-        const imageUrl = spriteImageUrls[imageKey];
-        if (!imageUrl) throw new Error(`No se encontró la imagen del sprite: ${imageKey}`);
+        const imageUrl = spriteImageUrls[type.spriteImage];
+        if (!imageUrl) throw new Error(`No se encontró la imagen del sprite: ${type.spriteImage}`);
 
         const image = await this.loadImage(imageUrl);
+        const metadata = {
+          columns: type.columns,
+          rows: type.rows,
+          stages: type.stages,
+          animations: type.animations,
+          defaultFps: type.defaultFps ?? 8,
+        };
         const frameRects = this.createGridFrameRects(image, metadata);
         this.assets.set(type.id, { ...type, metadata, image, frameRects });
       }),
@@ -133,8 +125,8 @@ class ChickenMergeGame {
   }
 
   createGridFrameRects(image, metadata) {
-    const width = image.naturalWidth || metadata.imageWidth;
-    const height = image.naturalHeight || metadata.imageHeight;
+    const width = image.naturalWidth;
+    const height = image.naturalHeight;
     const frameRects = [];
 
     for (let row = 0; row < metadata.rows; row += 1) {
