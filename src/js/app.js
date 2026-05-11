@@ -7,25 +7,36 @@ const spriteImageUrls = import.meta.glob('../assets/sprites/gallinas/**/*.{png,j
   query: '?url',
   import: 'default',
 });
+const foxImageUrls = import.meta.glob('../assets/sprites/**/*zorro*.{png,jpg,jpeg,webp}', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+});
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const randomBetween = (min, max) => min + Math.random() * (max - min);
+const distance = (first, second) => Math.hypot(first.x - second.x, first.y - second.y);
 
 class ChickenMergeGame {
   constructor(root) {
     this.root = root;
     this.assets = new Map();
+    this.foxAsset = null;
     this.chickens = [];
     this.effects = [];
     this.drag = null;
+    this.fox = null;
     this.score = 0;
+    this.eggsSpawned = 0;
     this.nextId = 1;
     this.spawnTimer = null;
+    this.foxTimer = null;
     this.animationFrame = null;
     this.lastTime = 0;
     this.isReady = false;
     this.hasStarted = false;
     this.pixelRatio = window.devicePixelRatio || 1;
+    this.currentSpawnEveryMs = GAME_CONFIG.spawnEveryMs;
   }
 
   async init() {
@@ -47,7 +58,7 @@ class ChickenMergeGame {
         <div class="start-content">
           <p class="eyebrow">Pipi's Game</p>
           <h1>Fusiona gallinas</h1>
-          <p class="subtitle">Une huevos y gallinas iguales arrastrando una línea entre ellos para crear criaturas más grandes.</p>
+          <p class="subtitle">Une huevos y gallinas iguales. Cada 16 huevos se desbloquea un nuevo color. Cuidado con el zorro.</p>
           <button id="play-button" class="play-button" type="button" disabled>Cargando...</button>
         </div>
       </section>
@@ -68,7 +79,6 @@ class ChickenMergeGame {
     this.resizeCanvas();
     this.bindEvents();
     this.reset();
-    this.startSpawner();
     window.cancelAnimationFrame(this.animationFrame);
     this.animationFrame = window.requestAnimationFrame((time) => this.loop(time));
   }
@@ -76,13 +86,13 @@ class ChickenMergeGame {
   renderGame() {
     this.root.innerHTML = `
       <section class="play-screen">
-        <canvas id="game-canvas" class="game-canvas" aria-label="Establo con huevos y gallinas"></canvas>
+        <canvas id="game-canvas" class="game-canvas" aria-label="Establo con huevos, gallinas y zorro"></canvas>
         <div class="hud">
           <div class="hud-score" aria-live="polite">
             <span>Puntos</span>
             <strong id="score">0</strong>
           </div>
-          <div id="message" class="hud-message" role="status">Arrastra desde un huevo o gallina hasta otro igual.</div>
+          <div id="message" class="hud-message" role="status">Arrastra desde un huevo o gallina hasta otro igual. Pulsa Z para llamar al zorro.</div>
           <button id="reset-button" type="button" class="hud-button">Reiniciar</button>
         </div>
       </section>
@@ -113,6 +123,26 @@ class ChickenMergeGame {
         this.assets.set(type.id, { ...type, metadata, image, frameRects });
       }),
     );
+
+    await this.loadFoxAsset();
+  }
+
+  async loadFoxAsset() {
+    const foxUrl = Object.values(foxImageUrls)[0];
+    if (!foxUrl) return;
+
+    try {
+      const image = await this.loadImage(foxUrl);
+      this.foxAsset = {
+        image,
+        columns: 16,
+        rows: 1,
+        frames: Array.from({ length: 16 }, (_, index) => index),
+        fps: 10,
+      };
+    } catch (error) {
+      console.warn('No se pudo cargar el sprite del zorro. Se usará un fallback.', error);
+    }
   }
 
   loadImage(src) {
@@ -151,6 +181,9 @@ class ChickenMergeGame {
 
   bindEvents() {
     window.addEventListener('resize', () => this.resizeCanvas());
+    window.addEventListener('keydown', (event) => {
+      if (event.key.toLowerCase() === 'z') this.spawnFox(true);
+    });
     this.canvas.addEventListener('pointerdown', (event) => this.onPointerDown(event));
     this.canvas.addEventListener('pointermove', (event) => this.onPointerMove(event));
     this.canvas.addEventListener('pointerup', (event) => this.onPointerUp(event));
@@ -167,37 +200,68 @@ class ChickenMergeGame {
     this.keepAllSpritesInside();
   }
 
-  startSpawner() {
-    window.clearInterval(this.spawnTimer);
-    this.spawnTimer = window.setInterval(() => {
-      if (this.chickens.length < GAME_CONFIG.maxChickens) this.spawnChicken();
-    }, GAME_CONFIG.spawnEveryMs);
-  }
-
   reset() {
+    window.clearTimeout(this.spawnTimer);
+    window.clearTimeout(this.foxTimer);
     this.chickens = [];
     this.effects = [];
     this.drag = null;
+    this.fox = null;
     this.score = 0;
+    this.eggsSpawned = 0;
     this.nextId = 1;
+    this.currentSpawnEveryMs = GAME_CONFIG.spawnEveryMs;
     this.scoreNode.textContent = '0';
+
     for (let index = 0; index < GAME_CONFIG.initialChickens; index += 1) this.spawnChicken();
-    this.setMessage('Arrastra desde un huevo o gallina hasta otro igual.');
+    this.setMessage('Primeros 16 huevos: un solo color. Después se desbloquean más colores.');
+    this.scheduleSpawn();
+    this.scheduleFox();
   }
 
   getBounds() {
     const rect = this.canvas.getBoundingClientRect();
-    return { width: rect.width, height: rect.height };
+    return {
+      width: rect.width,
+      height: rect.height,
+      top: GAME_CONFIG.topSafeArea,
+      bottom: rect.height,
+    };
+  }
+
+  getUnlockedTypeCount() {
+    return clamp(
+      Math.floor(this.eggsSpawned / GAME_CONFIG.colorUnlockEveryEggs) + 1,
+      1,
+      CHICKEN_TYPES.length,
+    );
   }
 
   getRandomType() {
-    const totalWeight = CHICKEN_TYPES.reduce((total, type) => total + type.spawnWeight, 0);
+    const unlockedTypes = CHICKEN_TYPES.slice(0, this.getUnlockedTypeCount());
+    const totalWeight = unlockedTypes.reduce((total, type) => total + type.spawnWeight, 0);
     let roll = Math.random() * totalWeight;
-    for (const type of CHICKEN_TYPES) {
+    for (const type of unlockedTypes) {
       roll -= type.spawnWeight;
       if (roll <= 0) return type;
     }
-    return CHICKEN_TYPES[0];
+    return unlockedTypes[0];
+  }
+
+  scheduleSpawn() {
+    window.clearTimeout(this.spawnTimer);
+    this.spawnTimer = window.setTimeout(() => {
+      if (this.chickens.length < GAME_CONFIG.maxChickens) {
+        this.spawnChicken();
+        if (Math.random() < GAME_CONFIG.foxChancePerSpawn) this.spawnFox();
+      }
+
+      this.currentSpawnEveryMs = Math.min(
+        GAME_CONFIG.maxSpawnEveryMs,
+        this.currentSpawnEveryMs + GAME_CONFIG.spawnGrowthMs,
+      );
+      this.scheduleSpawn();
+    }, this.currentSpawnEveryMs);
   }
 
   spawnChicken() {
@@ -217,7 +281,7 @@ class ChickenMergeGame {
       typeId: type.id,
       level,
       x: randomBetween(marginX, Math.max(marginX, bounds.width - marginX)),
-      y: randomBetween(marginY, Math.max(marginY, bounds.height - marginY)),
+      y: randomBetween(bounds.top + marginY, Math.max(bounds.top + marginY, bounds.bottom - marginY)),
       vx: movement.vx,
       vy: movement.vy,
       radius,
@@ -225,6 +289,7 @@ class ChickenMergeGame {
       mergedPulse: 0,
     });
     this.nextId += 1;
+    this.eggsSpawned += 1;
   }
 
   getMovementForLevel(level) {
@@ -234,6 +299,98 @@ class ChickenMergeGame {
       vx: randomBetween(GAME_CONFIG.minSpeed, GAME_CONFIG.maxSpeed) * direction,
       vy: randomBetween(-10, 10),
     };
+  }
+
+  scheduleFox() {
+    window.clearTimeout(this.foxTimer);
+    this.foxTimer = window.setTimeout(() => {
+      this.spawnFox();
+      this.scheduleFox();
+    }, randomBetween(GAME_CONFIG.foxMinDelayMs, GAME_CONFIG.foxMaxDelayMs));
+  }
+
+  spawnFox(forced = false) {
+    if (this.fox && !forced) return;
+    const bounds = this.getBounds();
+    const fromLeft = Math.random() > 0.5;
+    this.fox = {
+      x: fromLeft ? -100 : bounds.width + 100,
+      y: randomBetween(bounds.top + 70, Math.max(bounds.top + 70, bounds.bottom - 70)),
+      vx: fromLeft ? GAME_CONFIG.foxSpeed : -GAME_CONFIG.foxSpeed,
+      width: 124,
+      height: 50,
+      frameTime: 0,
+      hits: 0,
+      state: 'hunting',
+      targetId: this.findFoxTarget()?.id ?? null,
+    };
+    this.setMessage('¡Zorro! Púlsalo varias veces para espantarlo.');
+  }
+
+  findFoxTarget() {
+    const candidates = this.chickens.filter((chicken) => chicken.level > 0);
+    if (candidates.length === 0) return null;
+    const origin = this.fox ?? { x: 0, y: GAME_CONFIG.topSafeArea };
+    return candidates.reduce((closest, chicken) => {
+      if (!closest) return chicken;
+      return distance(origin, chicken) < distance(origin, closest) ? chicken : closest;
+    }, null);
+  }
+
+  updateFox(delta) {
+    if (!this.fox) return;
+    const fox = this.fox;
+    const bounds = this.getBounds();
+    fox.frameTime += delta;
+
+    if (fox.state === 'fleeing') {
+      fox.x += fox.vx * delta * 1.8;
+      if (fox.x < -180 || fox.x > bounds.width + 180) this.fox = null;
+      return;
+    }
+
+    let target = this.chickens.find((chicken) => chicken.id === fox.targetId && chicken.level > 0);
+    if (!target) {
+      target = this.findFoxTarget();
+      fox.targetId = target?.id ?? null;
+    }
+
+    if (target) {
+      const dx = target.x - fox.x;
+      const dy = target.y - fox.y;
+      const length = Math.max(1, Math.hypot(dx, dy));
+      fox.x += (dx / length) * GAME_CONFIG.foxSpeed * delta;
+      fox.y += (dy / length) * GAME_CONFIG.foxSpeed * delta;
+      fox.vx = dx >= 0 ? GAME_CONFIG.foxSpeed : -GAME_CONFIG.foxSpeed;
+
+      if (length < 40) {
+        this.chickens = this.chickens.filter((chicken) => chicken.id !== target.id);
+        fox.state = 'fleeing';
+        fox.vx = fox.x < bounds.width / 2 ? -GAME_CONFIG.foxSpeed : GAME_CONFIG.foxSpeed;
+        this.setMessage('El zorro se ha llevado una gallina. ¡Dale más rápido la próxima vez!');
+      }
+    } else {
+      fox.x += fox.vx * delta;
+    }
+
+    fox.y = clamp(fox.y, bounds.top + 42, bounds.bottom - 42);
+    if (fox.x < -180 || fox.x > bounds.width + 180) this.fox = null;
+  }
+
+  hitFox() {
+    if (!this.fox) return;
+    this.fox.hits += 1;
+    this.effects.push({ x: this.fox.x, y: this.fox.y, radius: 34, age: 0, duration: 0.35 });
+
+    if (this.fox.hits >= GAME_CONFIG.foxHitsToScare) {
+      const bounds = this.getBounds();
+      this.fox.state = 'fleeing';
+      this.fox.vx = this.fox.x < bounds.width / 2 ? -GAME_CONFIG.foxSpeed : GAME_CONFIG.foxSpeed;
+      this.setMessage('¡Has espantado al zorro!');
+      return;
+    }
+
+    this.setMessage(`¡Dale al zorro! Faltan ${GAME_CONFIG.foxHitsToScare - this.fox.hits} golpes.`);
   }
 
   getAnimation(typeId, level) {
@@ -280,7 +437,7 @@ class ChickenMergeGame {
     const halfWidth = size.width / 2 + 4;
     const halfHeight = size.height / 2 + 4;
     chicken.x = clamp(chicken.x, halfWidth, Math.max(halfWidth, bounds.width - halfWidth));
-    chicken.y = clamp(chicken.y, halfHeight, Math.max(halfHeight, bounds.height - halfHeight));
+    chicken.y = clamp(chicken.y, bounds.top + halfHeight, Math.max(bounds.top + halfHeight, bounds.bottom - halfHeight));
   }
 
   keepAllSpritesInside() {
@@ -290,10 +447,7 @@ class ChickenMergeGame {
 
   getSpriteBottomPoint(chicken) {
     const size = this.getChickenSize(chicken);
-    return {
-      x: chicken.x,
-      y: chicken.y + size.height / 2,
-    };
+    return { x: chicken.x, y: chicken.y + size.height / 2 };
   }
 
   loop(time) {
@@ -308,6 +462,7 @@ class ChickenMergeGame {
 
   update(delta) {
     const bounds = this.getBounds();
+    this.updateFox(delta);
 
     for (const chicken of this.chickens) {
       chicken.frameTime += delta;
@@ -330,9 +485,9 @@ class ChickenMergeGame {
         chicken.x = clamp(chicken.x, halfWidth, Math.max(halfWidth, bounds.width - halfWidth));
       }
 
-      if (chicken.y < halfHeight || chicken.y > bounds.height - halfHeight) {
+      if (chicken.y < bounds.top + halfHeight || chicken.y > bounds.bottom - halfHeight) {
         chicken.vy *= -1;
-        chicken.y = clamp(chicken.y, halfHeight, Math.max(halfHeight, bounds.height - halfHeight));
+        chicken.y = clamp(chicken.y, bounds.top + halfHeight, Math.max(bounds.top + halfHeight, bounds.bottom - halfHeight));
       }
 
       if (Math.random() < delta * 0.18) chicken.vy = randomBetween(-12, 12);
@@ -345,8 +500,10 @@ class ChickenMergeGame {
     const bounds = this.getBounds();
     this.ctx.clearRect(0, 0, bounds.width, bounds.height);
     this.drawStableFloor(bounds);
+    this.drawSafeArea(bounds);
     const sorted = [...this.chickens].sort((a, b) => a.y - b.y);
     for (const chicken of sorted) this.drawChicken(chicken);
+    if (this.fox) this.drawFox();
     if (this.drag) this.drawDragLine();
     for (const effect of this.effects) this.drawMergeEffect(effect);
   }
@@ -369,9 +526,23 @@ class ChickenMergeGame {
     ctx.fillStyle = '#fff3c4';
     for (let i = 0; i < 44; i += 1) {
       const x = (i * 97) % bounds.width;
-      const y = (i * 53) % bounds.height;
+      const y = bounds.top + ((i * 53) % Math.max(1, bounds.height - bounds.top));
       ctx.fillRect(x, y, 18, 3);
     }
+    ctx.restore();
+  }
+
+  drawSafeArea(bounds) {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.fillStyle = 'rgba(99, 58, 22, 0.22)';
+    ctx.fillRect(0, 0, bounds.width, bounds.top);
+    ctx.strokeStyle = 'rgba(255, 244, 201, 0.38)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(0, bounds.top);
+    ctx.lineTo(bounds.width, bounds.top);
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -399,13 +570,78 @@ class ChickenMergeGame {
     ctx.restore();
   }
 
+  drawFox() {
+    const fox = this.fox;
+    const facingLeft = fox.vx < 0;
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.translate(fox.x, fox.y);
+    ctx.scale(facingLeft ? -1 : 1, 1);
+
+    if (this.foxAsset) {
+      const frameIndex = Math.floor(fox.frameTime * this.foxAsset.fps) % this.foxAsset.frames.length;
+      const frame = this.foxAsset.frames[frameIndex];
+      const frameWidth = this.foxAsset.image.naturalWidth / this.foxAsset.columns;
+      const frameHeight = this.foxAsset.image.naturalHeight / this.foxAsset.rows;
+      ctx.drawImage(
+        this.foxAsset.image,
+        Math.floor(frame * frameWidth),
+        0,
+        Math.floor(frameWidth),
+        Math.floor(frameHeight),
+        -fox.width / 2,
+        -fox.height / 2,
+        fox.width,
+        fox.height,
+      );
+    } else {
+      this.drawFallbackFox(ctx, fox);
+    }
+
+    ctx.restore();
+  }
+
+  drawFallbackFox(ctx, fox) {
+    ctx.fillStyle = fox.state === 'fleeing' ? '#f69a35' : '#e66a21';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, fox.width * 0.34, fox.height * 0.34, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(-fox.width * 0.12, -fox.height * 0.24);
+    ctx.lineTo(-fox.width * 0.02, -fox.height * 0.58);
+    ctx.lineTo(fox.width * 0.08, -fox.height * 0.22);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(fox.width * 0.08, -fox.height * 0.22);
+    ctx.lineTo(fox.width * 0.18, -fox.height * 0.58);
+    ctx.lineTo(fox.width * 0.28, -fox.height * 0.18);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#fff2d5';
+    ctx.beginPath();
+    ctx.ellipse(fox.width * 0.2, fox.height * 0.1, fox.width * 0.12, fox.height * 0.12, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#2d1608';
+    ctx.beginPath();
+    ctx.arc(fox.width * 0.2, -fox.height * 0.08, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#e66a21';
+    ctx.beginPath();
+    ctx.ellipse(-fox.width * 0.44, 0, fox.width * 0.22, fox.height * 0.18, -0.35, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fff2d5';
+    ctx.beginPath();
+    ctx.ellipse(-fox.width * 0.58, -fox.height * 0.02, fox.width * 0.08, fox.height * 0.1, -0.35, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
   drawDragLine() {
     const ctx = this.ctx;
     const { source, pointer } = this.drag;
     const target = this.getChickenAt(pointer.x, pointer.y, source.id);
     const canMerge = target && this.canMerge(source, target);
     const start = this.getSpriteBottomPoint(source);
-
     ctx.save();
     ctx.strokeStyle = canMerge ? '#fff36d' : '#ffffff';
     ctx.globalAlpha = canMerge ? 1 : 0.72;
@@ -451,8 +687,20 @@ class ChickenMergeGame {
     return { x: event.clientX - rect.left, y: event.clientY - rect.top };
   }
 
+  isFoxAt(x, y) {
+    if (!this.fox) return false;
+    return Math.abs(x - this.fox.x) <= this.fox.width * 0.58 && Math.abs(y - this.fox.y) <= this.fox.height * 0.78;
+  }
+
   onPointerDown(event) {
     const pointer = this.getPointer(event);
+
+    if (this.isFoxAt(pointer.x, pointer.y)) {
+      event.preventDefault();
+      this.hitFox();
+      return;
+    }
+
     const chicken = this.getChickenAt(pointer.x, pointer.y);
     if (!chicken) return;
     event.preventDefault();
@@ -486,6 +734,7 @@ class ChickenMergeGame {
   }
 
   getChickenAt(x, y, excludeId = null) {
+    if (y < GAME_CONFIG.topSafeArea) return null;
     return [...this.chickens].reverse().find((chicken) => {
       if (chicken.id === excludeId) return false;
       const size = this.getChickenSize(chicken);
